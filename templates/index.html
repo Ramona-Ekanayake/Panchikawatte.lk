@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panchikawatte.lk - Vehicle Parts Marketplace</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="logo">
+                <h1>Panchikawatte.lk</h1>
+            </div>
+            <div class="nav-links">
+                <a href="/" class="active">Home</a>
+                <a href="/browse">Browse Parts</a>
+                <div class="auth-buttons">
+                    <button id="createPostBtn" class="btn btn-primary" style="display: none;">Create Post</button>
+                    <button id="loginBtn" class="btn">Login</button>
+                    <button id="registerBtn" class="btn btn-primary">Register</button>
+                    <button id="logoutBtn" class="btn" style="display: none;">Logout</button>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <h1>Find Your Vehicle Parts in Sri Lanka</h1>
+            <p>Connect with trusted suppliers in Panchikawatte</p>
+        </section>
+
+        <section class="parts-requests">
+            <h2>Recent Part Requests</h2>
+            <div id="requestsList" class="requests-grid">
+                <!-- Parts requests will be loaded here dynamically -->
+            </div>
+        </section>
+
+        <!-- Login Modal -->
+        <div id="loginModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Login</h2>
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="loginEmail">Email</label>
+                        <input type="email" id="loginEmail" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">Password</label>
+                        <input type="password" id="loginPassword" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Login</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Register Modal -->
+        <div id="registerModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Register</h2>
+                <form id="registerForm">
+                    <div class="form-group">
+                        <label for="fullName">Full Name</label>
+                        <input type="text" id="fullName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="idNumber">ID Number</label>
+                        <input type="text" id="idNumber" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="phone">Phone Number</label>
+                        <input type="tel" id="phone" required>
+                        <button type="button" id="verifyPhone" class="btn">Verify Phone</button>
+                    </div>
+                    <div class="form-group" id="verificationCodeGroup" style="display: none;">
+                        <label for="verificationCode">Verification Code</label>
+                        <input type="text" id="verificationCode">
+                        <button type="button" id="submitCode" class="btn">Submit Code</button>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Register</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- New Part Request Modal -->
+        <div id="newRequestModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Request New Part</h2>
+                    <span class="close">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <form id="partRequestForm">
+                        <div class="form-group">
+                            <label for="vehicleBrand">Vehicle Brand</label>
+                            <select id="vehicleBrand" required>
+                                <option value="">Select Brand</option>
+                                <option value="Toyota">Toyota</option>
+                                <option value="Honda">Honda</option>
+                                <option value="Nissan">Nissan</option>
+                                <option value="Suzuki">Suzuki</option>
+                                <option value="Mitsubishi">Mitsubishi</option>
+                                <option value="BMW">BMW</option>
+                                <option value="Mercedes">Mercedes-Benz</option>
+                                <option value="Audi">Audi</option>
+                                <option value="Mazda">Mazda</option>
+                                <option value="Hyundai">Hyundai</option>
+                                <option value="Kia">Kia</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="vehicleModel">Vehicle Model</label>
+                            <select id="vehicleModel" required disabled>
+                                <option value="">Select Model</option>
+                                <!-- Models will be populated based on selected brand -->
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="vehicleYear">Year</label>
+                            <select id="vehicleYear" required>
+                                <option value="">Select Year</option>
+                                <!-- Will be populated with years -->
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="registrationNumber">Vehicle Registration Number</label>
+                            <input type="text" id="registrationNumber" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="chassisNumber">Chassis Number</label>
+                            <input type="text" id="chassisNumber" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="partNumber">Part Number</label>
+                            <input type="text" id="partNumber" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="partCategory">Part Category</label>
+                            <select id="partCategory" required>
+                                <option value="">Select Category</option>
+                                <option value="engine">Engine Parts</option>
+                                <option value="transmission">Transmission</option>
+                                <option value="brakes">Brake System</option>
+                                <option value="suspension">Suspension & Steering</option>
+                                <option value="electrical">Electrical System</option>
+                                <option value="body">Body Parts</option>
+                                <option value="interior">Interior</option>
+                                <option value="ac">AC & Heating</option>
+                                <option value="fuel">Fuel System</option>
+                                <option value="exhaust">Exhaust System</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="partName">Part Name</label>
+                            <select id="partName" required disabled>
+                                <option value="">Select Part</option>
+                                <!-- Will be populated based on category -->
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="partImages">Part Images</label>
+                            <div class="image-upload-grid">
+                                <div class="image-upload-item">
+                                    <label for="leftImage">Left View</label>
+                                    <input type="file" id="leftImage" accept="image/*" data-view="left">
+                                    <div class="image-preview" id="leftPreview"></div>
+                                </div>
+                                <div class="image-upload-item">
+                                    <label for="rightImage">Right View</label>
+                                    <input type="file" id="rightImage" accept="image/*" data-view="right">
+                                    <div class="image-preview" id="rightPreview"></div>
+                                </div>
+                                <div class="image-upload-item">
+                                    <label for="topImage">Top View</label>
+                                    <input type="file" id="topImage" accept="image/*" data-view="top">
+                                    <div class="image-preview" id="topPreview"></div>
+                                </div>
+                                <div class="image-upload-item">
+                                    <label for="bottomImage">Bottom View</label>
+                                    <input type="file" id="bottomImage" accept="image/*" data-view="bottom">
+                                    <div class="image-preview" id="bottomPreview"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="partDescription">Description</label>
+                            <textarea id="partDescription" required placeholder="Please provide additional details about the part you need (condition, specific requirements, etc.)..."></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" form="partRequestForm" class="btn btn-primary form-submit-btn">Submit Request</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quote Modal -->
+        <div id="quoteModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Submit Quote</h2>
+                    <span class="close">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <form id="quoteForm">
+                        <input type="hidden" id="requestId">
+                        <div class="form-group">
+                            <label for="price">Price</label>
+                            <input type="number" id="price" required min="0" step="0.01">
+                        </div>
+                        <div class="form-group">
+                            <label for="currency">Currency</label>
+                            <select id="currency" required>
+                                <option value="LKR">LKR</option>
+                                <option value="USD">USD</option>
+                                <option value="EUR">EUR</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="condition">Condition</label>
+                            <select id="condition" required>
+                                <option value="new">New</option>
+                                <option value="used">Used</option>
+                                <option value="refurbished">Refurbished</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="notes">Additional Notes</label>
+                            <textarea id="notes" rows="3"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" form="quoteForm" class="btn btn-primary form-submit-btn">Submit Quote</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Part Details Modal -->
+        <div id="partDetailsModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Part Details</h2>
+                    <span class="close">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div id="partDetailsContent"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>&copy; 2024 Panchikawatte.lk - All rights reserved</p>
+    </footer>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html> 
