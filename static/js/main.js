@@ -3,6 +3,8 @@ const loginBtn = document.getElementById('loginBtn');
 const registerBtn = document.getElementById('registerBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 const createPostBtn = document.getElementById('createPostBtn');
+const findPartsBtn = document.getElementById('findPartsBtn');
+const becomeSupplierBtn = document.getElementById('becomeSupplierBtn');
 const loginModal = document.getElementById('loginModal');
 const registerModal = document.getElementById('registerModal');
 const newRequestModal = document.getElementById('newRequestModal');
@@ -254,6 +256,238 @@ const partCategories = {
     ]
 };
 
+// User state with additional properties
+let currentUser = {
+    name: null,
+    type: null,
+    credits: 0,
+    isSupplier: false
+};
+
+// Event listeners for auth
+document.addEventListener('DOMContentLoaded', () => {
+    // Check if user is logged in
+    checkAuthStatus();
+    
+    // Existing event listeners...
+});
+
+function checkAuthStatus() {
+    const token = localStorage.getItem('token');
+    if (token) {
+        // Fetch user data
+        fetch('/api/user', {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            currentUser = data;
+            updateUIForLoggedInUser();
+            loadUserDashboard();
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            handleLogout();
+        });
+    }
+}
+
+function updateUIForLoggedInUser() {
+    document.getElementById('loginBtn').style.display = 'none';
+    document.getElementById('registerBtn').style.display = 'none';
+    document.getElementById('logoutBtn').style.display = 'inline-block';
+    
+    // Show create post button only for customers
+    document.getElementById('createPostBtn').style.display = 
+        currentUser.type === 'customer' ? 'inline-block' : 'none';
+    
+    // Update welcome message with user type badge
+    const userTypeText = currentUser.type === 'supplier' ? 'Supplier' : 'Customer';
+    const userTypeBadgeClass = currentUser.type === 'supplier' ? 'supplier' : 'customer';
+    document.getElementById('userName').innerHTML = `
+        ${currentUser.name}
+        <span class="user-type-badge ${userTypeBadgeClass}">${userTypeText}</span>
+    `;
+
+    // Show credit balance for customers only
+    if (currentUser.type === 'customer') {
+        const creditBalance = document.createElement('div');
+        creditBalance.className = 'credit-balance';
+        creditBalance.innerHTML = `
+            Credits: <span class="amount">LKR ${currentUser.credits.toFixed(2)}</span>
+        `;
+        document.querySelector('.dashboard-header').appendChild(creditBalance);
+    }
+
+    // Show appropriate dashboard based on user type
+    document.getElementById('userDashboard').style.display = 
+        currentUser.type === 'customer' ? 'block' : 'none';
+    document.getElementById('supplierDashboard').style.display = 
+        currentUser.type === 'supplier' ? 'block' : 'none';
+    
+    if (currentUser.type === 'supplier') {
+        loadSupplierDashboard();
+    }
+}
+
+function loadUserDashboard() {
+    // Fetch user's requests and offers
+    const token = localStorage.getItem('token');
+    
+    Promise.all([
+        fetch('/api/user/requests', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch('/api/user/offers', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        })
+    ])
+    .then(([requestsResponse, offersResponse]) => 
+        Promise.all([requestsResponse.json(), offersResponse.json()])
+    )
+    .then(([requestsData, offersData]) => {
+        updateDashboardStats(requestsData, offersData);
+        displayOffers(offersData.offers);
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function updateDashboardStats(requestsData, offersData) {
+    document.getElementById('totalRequests').textContent = requestsData.activeRequests || 0;
+    document.getElementById('totalOffers').textContent = offersData.newOffers || 0;
+}
+
+function displayOffers(offers) {
+    const offersGrid = document.getElementById('offersGrid');
+    offersGrid.innerHTML = '';
+
+    offers.forEach(offer => {
+        const offerCard = createOfferCard(offer);
+        offersGrid.appendChild(offerCard);
+    });
+}
+
+function createOfferCard(offer) {
+    const card = document.createElement('div');
+    card.className = 'offer-card';
+    
+    card.innerHTML = `
+        <div class="offer-header">
+            <h4>${offer.partName}</h4>
+            <div class="offer-meta">
+                <span>Request #${offer.requestId}</span>
+                <span>${new Date(offer.createdAt).toLocaleDateString()}</span>
+            </div>
+        </div>
+        <div class="offer-content">
+            <div class="offer-price">
+                ${offer.currency} ${offer.price.toLocaleString()}
+            </div>
+            <div class="offer-details">
+                <p>Condition: ${offer.condition}</p>
+                <p>${offer.notes}</p>
+            </div>
+            <div class="offer-supplier">
+                <div class="supplier-info-blur">
+                    <p>Supplier: ${offer.supplierName}</p>
+                    <p>Location: ${offer.location}</p>
+                    <p>Contact: ${offer.contactInfo}</p>
+                </div>
+                <div class="unlock-overlay">
+                    <p>🔒 Supplier details are hidden</p>
+                    <p>Subscribe to view complete information</p>
+                    <button class="btn unlock-btn" onclick="handleUnlock('${offer.id}')">
+                        Unlock for LKR ${offer.unlockPrice}
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    return card;
+}
+
+function handleUnlock(offerId) {
+    if (!currentUser) {
+        alert('Please login to view supplier information');
+        openModal(loginModal);
+        return;
+    }
+
+    if (currentUser.credits < 500) {
+        alert('Insufficient credits. Please purchase credits to view supplier information.');
+        document.getElementById('requestIdForPayment').value = offerId;
+        openModal(document.getElementById('paymentModal'));
+        return;
+    }
+
+    // Process the unlock with available credits
+    processUnlock(offerId);
+}
+
+// Add credit package options
+const creditPackages = [
+    { id: 'basic', credits: 500, price: 500, description: 'Basic Package - 1 supplier unlock' },
+    { id: 'standard', credits: 2500, price: 2000, description: 'Standard Package - 5 supplier unlocks (20% off)' },
+    { id: 'premium', credits: 6000, price: 4000, description: 'Premium Package - 12 supplier unlocks (33% off)' }
+];
+
+// Update payment modal to show credit packages
+function showPaymentModal(offerId) {
+    const modal = document.getElementById('paymentModal');
+    const modalBody = modal.querySelector('.modal-body');
+    
+    modalBody.innerHTML = `
+        <div class="payment-info">
+            <h3>Select Credit Package</h3>
+            <div class="credit-packages">
+                ${creditPackages.map(pkg => `
+                    <div class="package-card" data-package-id="${pkg.id}">
+                        <h4>${pkg.id.charAt(0).toUpperCase() + pkg.id.slice(1)} Package</h4>
+                        <div class="package-credits">${pkg.credits} Credits</div>
+                        <div class="package-price">LKR ${pkg.price.toLocaleString()}</div>
+                        <p>${pkg.description}</p>
+                        <button class="btn btn-primary select-package" data-package-id="${pkg.id}">
+                            Select Package
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+        <form id="paymentForm" style="display: none;">
+            <input type="hidden" id="requestIdForPayment" value="${offerId}">
+            <input type="hidden" id="selectedPackage">
+            <div class="form-group">
+                <label for="cardNumber">Card Number</label>
+                <input type="text" id="cardNumber" required pattern="[0-9]{16}">
+            </div>
+            <div class="form-group">
+                <label for="cardExpiry">Expiry Date</label>
+                <input type="text" id="cardExpiry" required placeholder="MM/YY" pattern="(0[1-9]|1[0-2])\/([0-9]{2})">
+            </div>
+            <div class="form-group">
+                <label for="cardCvv">CVV</label>
+                <input type="text" id="cardCvv" required pattern="[0-9]{3,4}">
+            </div>
+            <button type="submit" class="btn btn-primary">Complete Payment</button>
+        </form>
+    `;
+
+    // Add event listeners for package selection
+    modal.querySelectorAll('.select-package').forEach(button => {
+        button.addEventListener('click', () => {
+            const packageId = button.dataset.packageId;
+            document.getElementById('selectedPackage').value = packageId;
+            modal.querySelector('.credit-packages').style.display = 'none';
+            modal.querySelector('#paymentForm').style.display = 'block';
+        });
+    });
+
+    openModal(modal);
+}
+
 // Populate years (from 1990 to current year)
 function populateYears() {
     const yearSelect = document.getElementById('vehicleYear');
@@ -451,36 +685,193 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     }
 });
 
-document.getElementById('registerForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = {
-        fullName: document.getElementById('fullName').value,
-        idNumber: document.getElementById('idNumber').value,
-        email: document.getElementById('email').value,
-        phone: document.getElementById('phone').value,
-        password: document.getElementById('password').value,
-    };
+// Show/hide supplier fields based on user type selection
+document.getElementById('userType').addEventListener('change', function() {
+    const supplierFields = document.getElementById('supplierFields');
+    if (this.value === 'supplier') {
+        supplierFields.style.display = 'block';
+        document.querySelectorAll('#supplierFields input, #supplierFields select').forEach(input => {
+            input.required = true;
+        });
+    } else {
+        supplierFields.style.display = 'none';
+        document.querySelectorAll('#supplierFields input, #supplierFields select').forEach(input => {
+            input.required = false;
+        });
+    }
+});
 
+// Form validation functions
+function validateEmail(email) {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
+}
+
+function validatePhone(phone) {
+    const re = /^(?:\+94|0)[1-9][0-9]{8}$/;
+    return re.test(phone);
+}
+
+function validatePassword(password) {
+    return password.length >= 8;
+}
+
+function showError(input, message) {
+    const formGroup = input.closest('.form-group');
+    formGroup.classList.remove('success');
+    formGroup.classList.add('error');
+    
+    let errorMessage = formGroup.querySelector('.error-message');
+    if (!errorMessage) {
+        errorMessage = document.createElement('div');
+        errorMessage.className = 'error-message';
+        formGroup.appendChild(errorMessage);
+    }
+    errorMessage.textContent = message;
+}
+
+function showSuccess(input) {
+    const formGroup = input.closest('.form-group');
+    formGroup.classList.remove('error');
+    formGroup.classList.add('success');
+    
+    const errorMessage = formGroup.querySelector('.error-message');
+    if (errorMessage) {
+        errorMessage.remove();
+    }
+}
+
+// Handle file uploads and previews
+function handleFileUpload(input, previewId) {
+    const file = input.files[0];
+    if (!file) return;
+
+    // Validate file size (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+        showError(input, 'File size must be less than 5MB');
+        input.value = '';
+        return;
+    }
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+    if (!allowedTypes.includes(file.type)) {
+        showError(input, 'File must be PDF, JPG, or PNG');
+        input.value = '';
+        return;
+    }
+
+    // Create preview
+    const preview = document.createElement('div');
+    preview.className = 'document-preview';
+    preview.innerHTML = `
+        <img src="${file.type === 'application/pdf' ? '/static/images/pdf-icon.png' : URL.createObjectURL(file)}">
+        <div class="document-info">
+            <div>${file.name}</div>
+            <small>${(file.size / 1024 / 1024).toFixed(2)} MB</small>
+        </div>
+        <button type="button" class="remove-document">&times;</button>
+    `;
+
+    const container = document.getElementById(previewId);
+    container.innerHTML = '';
+    container.appendChild(preview);
+
+    // Handle remove button
+    preview.querySelector('.remove-document').addEventListener('click', () => {
+        input.value = '';
+        container.innerHTML = '';
+    });
+
+    showSuccess(input);
+}
+
+// Handle file input changes
+document.getElementById('businessRegistrationDoc').addEventListener('change', function() {
+    handleFileUpload(this, 'businessRegDocPreview');
+});
+
+document.getElementById('vatCertificate').addEventListener('change', function() {
+    handleFileUpload(this, 'vatCertificatePreview');
+});
+
+// Handle registration form submission
+document.getElementById('registerForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData();
+    
+    // Add basic user information
+    formData.append('userType', document.getElementById('userType').value);
+    formData.append('fullName', document.getElementById('fullName').value);
+    formData.append('email', document.getElementById('email').value);
+    formData.append('phone', document.getElementById('phone').value);
+    formData.append('password', document.getElementById('password').value);
+    
+    // Validate passwords match
+    const password = document.getElementById('password').value;
+    const confirmPassword = document.getElementById('confirmPassword').value;
+    if (password !== confirmPassword) {
+        showMessage('Passwords do not match', 'error');
+        return;
+    }
+    
+    // Add supplier-specific information if registering as supplier
+    if (document.getElementById('userType').value === 'supplier') {
+        formData.append('businessName', document.getElementById('businessName').value);
+        formData.append('businessRegNumber', document.getElementById('businessRegNumber').value);
+        formData.append('vatNumber', document.getElementById('vatNumber').value);
+        formData.append('businessAddress', document.getElementById('businessAddress').value);
+        formData.append('district', document.getElementById('district').value);
+        
+        // Get selected specializations
+        const specializations = [];
+        document.querySelectorAll('input[name="specialization"]:checked').forEach(checkbox => {
+            specializations.push(checkbox.value);
+        });
+        formData.append('specializations[]', specializations);
+        
+        // Add business registration document
+        const businessRegDoc = document.getElementById('businessRegistrationDoc').files[0];
+        if (businessRegDoc) {
+            formData.append('businessRegistrationDoc', businessRegDoc);
+        }
+        
+        // Add VAT certificate if provided
+        const vatCertificate = document.getElementById('vatCertificate').files[0];
+        if (vatCertificate) {
+            formData.append('vatCertificate', vatCertificate);
+        }
+    }
+    
     try {
         const response = await fetch('/api/register', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(formData),
+            body: formData
         });
-
+        
+        const data = await response.json();
+        
         if (response.ok) {
-            alert('Registration successful! Please login.');
-            closeModal(registerModal);
-            openModal(loginModal);
+            showMessage('Registration successful! Please log in.', 'success');
+            closeModal(document.getElementById('registerModal'));
+            openModal(document.getElementById('loginModal'));
         } else {
-            const data = await response.json();
-            alert(data.message || 'Registration failed. Please try again.');
+            showMessage(data.message || 'Registration failed. Please try again.', 'error');
         }
     } catch (error) {
-        console.error('Error:', error);
-        alert('An error occurred. Please try again.');
+        console.error('Registration error:', error);
+        showMessage('An error occurred during registration. Please try again.', 'error');
+    }
+});
+
+// Handle user type change
+document.getElementById('userType').addEventListener('change', function(e) {
+    const supplierFields = document.getElementById('supplierFields');
+    if (e.target.value === 'supplier') {
+        supplierFields.style.display = 'block';
+    } else {
+        supplierFields.style.display = 'none';
     }
 });
 
@@ -564,65 +955,105 @@ async function loadPartRequests() {
             requestsList.innerHTML = '';
 
             requests.forEach(request => {
-                const requestCard = document.createElement('div');
-                requestCard.className = 'request-card';
-
-                // Create image gallery if there are images
-                let imageGallery = '';
-                if (request.imageUrls && Object.keys(request.imageUrls).length > 0) {
-                    imageGallery = `
-                        <div class="request-images">
-                            ${Object.entries(request.imageUrls).map(([view, url]) => `
-                                <div class="request-image" data-view="${view}">
-                                    <img src="${url}" alt="${view} view" onclick="showFullImage('${url}', '${view}')">
-                                </div>
-                            `).join('')}
-                        </div>
-                    `;
-                }
-
-                requestCard.innerHTML = `
-                    <div class="request-header">
-                        <h3>${request.partName}</h3>
-                        <span class="category-badge">${request.partCategory}</span>
-                    </div>
-                    ${imageGallery}
-                    <div class="vehicle-info">
-                        <p><strong>Vehicle:</strong> ${request.vehicleModel}</p>
-                        <p><strong>Part Number:</strong> ${request.partNumber}</p>
-                    </div>
-                    <div class="description">
-                        <p>${request.description.substring(0, 150)}${request.description.length > 150 ? '...' : ''}</p>
-                    </div>
-                    <button class="see-more-btn" onclick="showPartDetails('${request.id}')">See More</button>
-                    <div class="request-footer">
-                        <span class="status-badge ${request.status}">${request.status}</span>
-                        <button class="btn btn-primary" onclick="showQuoteModal('${request.id}')">
-                            Submit Quote
-                        </button>
-                    </div>
-                    ${request.quotes && request.quotes.length > 0 ? `
-                        <div class="quotes-section">
-                            <h4>Quotes (${request.quotes.length})</h4>
-                            ${request.quotes.map(quote => `
-                                <div class="quote-item">
-                                    <span class="quote-price">${quote.currency} ${quote.price.toFixed(2)}</span>
-                                    <span class="quote-condition ${quote.condition}">${quote.condition}</span>
-                                    <p>${quote.notes}</p>
-                                </div>
-                            `).join('')}
-                        </div>
-                    ` : ''}
-                `;
+                const requestCard = createRequestCard(request);
                 requestsList.appendChild(requestCard);
             });
         }
     } catch (error) {
         console.error('Error loading requests:', error);
+        showMessage('Failed to load requests', 'error');
     }
 }
 
-// Show part details modal
+// Update request status
+async function updateRequestStatus(requestId, newStatus) {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        showMessage('Please login to update request status', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/parts/requests/${requestId}/status`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                requestId: requestId,
+                status: newStatus
+            })
+        });
+
+        if (response.ok) {
+            showMessage('Request status updated successfully', 'success');
+            loadPartRequests(); // Refresh the requests list
+        } else {
+            const data = await response.json();
+            showMessage(data.message || 'Failed to update request status', 'error');
+        }
+    } catch (error) {
+        console.error('Error updating request status:', error);
+        showMessage('An error occurred while updating the status', 'error');
+    }
+}
+
+// Update the request card to include status management
+function createRequestCard(request) {
+    const isAuthor = currentUser && currentUser.id === request.userId;
+    const statusOptions = isAuthor ? `
+        <div class="status-management ${request.status}">
+            <label>Update Status:</label>
+            <select onchange="updateRequestStatus('${request.id}', this.value)" class="status-select">
+                <option value="open" ${request.status === 'open' ? 'selected' : ''}>Open</option>
+                <option value="received_offer" ${request.status === 'received_offer' ? 'selected' : ''}>Received Offer</option>
+                <option value="purchased" ${request.status === 'purchased' ? 'selected' : ''}>Purchased</option>
+                <option value="completed" ${request.status === 'completed' ? 'selected' : ''}>Completed</option>
+            </select>
+        </div>
+    ` : '';
+
+    // Update the loadPartRequests function to use the new status management
+    const requestCard = document.createElement('div');
+    requestCard.className = 'request-card';
+    requestCard.innerHTML = `
+        <div class="request-header">
+            <h3>${request.partName}</h3>
+            <span class="category-badge">${request.partCategory}</span>
+        </div>
+        <div class="request-meta">
+            <span class="request-date">Posted: ${new Date(request.createdAt).toLocaleString()}</span>
+            <span class="status-badge ${request.status}">${request.status.replace('_', ' ')}</span>
+        </div>
+        ${request.imageUrls ? `
+            <div class="request-images">
+                ${Object.entries(request.imageUrls).map(([view, url]) => `
+                    <div class="request-image" data-view="${view}">
+                        <img src="${url}" alt="${view} view" onclick="showFullImage('${url}', '${view}')">
+                    </div>
+                `).join('')}
+            </div>
+        ` : ''}
+        <div class="vehicle-info">
+            <p><strong>Vehicle:</strong> ${request.vehicleModel}</p>
+            <p><strong>Part Number:</strong> ${request.partNumber}</p>
+        </div>
+        <div class="description">
+            <p>${request.description}</p>
+        </div>
+        ${isAuthor ? statusOptions : ''}
+        <div class="request-footer">
+            ${currentUser && currentUser.type === 'supplier' && request.status === 'open' ? 
+                `<button class="btn btn-primary" onclick="showQuoteModal('${request.id}')">Submit Quote</button>` : ''
+            }
+            <button class="btn btn-secondary" onclick="showPartDetails('${request.id}')">See More</button>
+        </div>
+    `;
+    return requestCard;
+}
+
+// Show part details modal with appropriate visibility
 window.showPartDetails = async function(requestId) {
     try {
         const response = await fetch(`/api/parts/requests/${requestId}`);
@@ -630,10 +1061,70 @@ window.showPartDetails = async function(requestId) {
             const data = await response.json();
             const request = data.data;
             
+            // Format the date and time
+            const formattedDate = new Date(request.createdAt).toLocaleString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true
+            });
+            
+            // Only show submit quote button for suppliers
+            const submitQuoteButton = currentUser && currentUser.type === 'supplier' 
+                ? `<button class="btn btn-primary" onclick="showQuoteModal('${request.id}')">Submit Quote</button>`
+                : '';
+
+            // Determine if the current user is the author
+            const isAuthor = currentUser && currentUser.id === request.authorId;
+
+            // Prepare quotes section based on user status
+            let quotesSection = '';
+            if (request.quotes && request.quotes.length > 0) {
+                if (!currentUser) {
+                    quotesSection = `<h4>${request.quotes.length} Quotes Received</h4>`;
+                } else if (isAuthor) {
+                    quotesSection = `
+                        <div class="quotes-section">
+                            <h4>Quotes (${request.quotes.length})</h4>
+                            ${request.quotes.map(quote => `
+                                <div class="quote-item">
+                                    <div class="quote-header">
+                                        <span class="quote-price">${quote.currency} ${quote.price.toFixed(2)}</span>
+                                        <span class="quote-condition ${quote.condition}">${quote.condition}</span>
+                                    </div>
+                                    <div class="supplier-info ${quote.isUnlocked ? '' : 'supplier-info-blur'}">
+                                        <p>Supplier: ${quote.supplierName}</p>
+                                        <p>Location: ${quote.location}</p>
+                                        <p>Contact: ${quote.contactInfo}</p>
+                                        ${quote.notes ? `<p>Notes: ${quote.notes}</p>` : ''}
+                                    </div>
+                                    ${!quote.isUnlocked ? `
+                                        <div class="unlock-overlay">
+                                            <p>🔒 Supplier details are hidden</p>
+                                            <p>Purchase credits to view complete information</p>
+                                            <button class="btn unlock-btn" onclick="handleUnlock('${quote.id}')">
+                                                Unlock for LKR 500
+                                            </button>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    quotesSection = `<h4>${request.quotes.length} Quotes Received</h4>`;
+                }
+            }
+            
             const content = document.getElementById('partDetailsContent');
             content.innerHTML = `
                 <div class="part-details-content">
                     <h2>${request.partName}</h2>
+                    <div class="request-meta">
+                        <span class="request-date">Posted: ${formattedDate}</span>
+                    </div>
                     <div class="part-details-images">
                         ${Object.entries(request.imageUrls).map(([view, url]) => `
                             <div class="request-image" data-view="${view}">
@@ -663,9 +1154,8 @@ window.showPartDetails = async function(requestId) {
                         <h3>Description</h3>
                         <p>${request.description}</p>
                     </div>
-                    <button class="btn btn-primary" onclick="showQuoteModal('${request.id}')">
-                        Submit Quote
-                    </button>
+                    ${submitQuoteButton}
+                    ${quotesSection}
                 </div>
             `;
             openModal(document.getElementById('partDetailsModal'));
@@ -677,6 +1167,17 @@ window.showPartDetails = async function(requestId) {
 
 // Show quote modal
 window.showQuoteModal = function(requestId) {
+    if (!currentUser) {
+        alert('Please login to submit a quote');
+        openModal(loginModal);
+        return;
+    }
+
+    if (currentUser.type !== 'supplier') {
+        alert('Only registered suppliers can submit quotes');
+        return;
+    }
+
     document.getElementById('requestId').value = requestId;
     openModal(document.getElementById('quoteModal'));
 };
@@ -743,6 +1244,247 @@ window.showFullImage = function(url, view) {
     });
 };
 
+// Event listeners for hero buttons
+findPartsBtn.addEventListener('click', () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        openModal(loginModal);
+        return;
+    }
+    
+    if (currentUser.type === 'supplier') {
+        alert('Suppliers cannot create part requests. You can only submit quotes for existing requests.');
+        return;
+    }
+    
+    openModal(newRequestModal);
+    populateYears();
+});
+
+becomeSupplierBtn.addEventListener('click', () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        openModal(registerModal);
+    } else {
+        // Redirect to supplier dashboard or show supplier registration modal
+        alert('Supplier registration coming soon!');
+    }
+});
+
 // Initial setup
 checkLoginState();
-loadPartRequests(); 
+loadPartRequests();
+
+// Process payment and unlock supplier information
+document.getElementById('paymentForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const packageId = document.getElementById('selectedPackage').value;
+    const selectedPackage = creditPackages.find(pkg => pkg.id === packageId);
+    
+    try {
+        const response = await fetch('/api/purchase-credits', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                packageId,
+                amount: selectedPackage.price,
+                credits: selectedPackage.credits,
+                cardNumber: document.getElementById('cardNumber').value,
+                cardExpiry: document.getElementById('cardExpiry').value,
+                cardCvv: document.getElementById('cardCvv').value
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            currentUser.credits = data.newBalance;
+            updateUIForLoggedInUser();
+            closeModal(document.getElementById('paymentModal'));
+            alert(`Successfully purchased ${selectedPackage.credits} credits!`);
+        } else {
+            alert('Payment failed. Please try again.');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
+    }
+});
+
+async function processUnlock(offerId) {
+    try {
+        const response = await fetch(`/api/unlock-supplier/${offerId}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            currentUser.credits = data.newBalance;
+            updateUIForLoggedInUser();
+            
+            // Update the offer card to show supplier information
+            const offerCard = document.querySelector(`[data-offer-id="${offerId}"]`);
+            if (offerCard) {
+                const supplierInfo = offerCard.querySelector('.supplier-info-blur');
+                const unlockOverlay = offerCard.querySelector('.unlock-overlay');
+                
+                supplierInfo.style.filter = 'none';
+                unlockOverlay.style.display = 'none';
+            }
+        } else {
+            alert('Failed to unlock supplier information. Please try again.');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
+    }
+}
+
+// Handle unlocking supplier information
+async function handleUnlock(quoteId) {
+    if (!currentUser) {
+        showMessage('Please log in to unlock supplier information', 'error');
+        return;
+    }
+
+    if (currentUser.credits < 500) {
+        // Show payment modal if user doesn't have enough credits
+        showPaymentModal();
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/quotes/${quoteId}/unlock`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                userId: currentUser.id,
+                credits: 500
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            // Update user credits
+            currentUser.credits -= 500;
+            updateCreditDisplay();
+            // Refresh the requests to show unlocked supplier info
+            loadPartRequests();
+            showMessage('Supplier information unlocked successfully!', 'success');
+        } else {
+            showMessage('Failed to unlock supplier information. Please try again.', 'error');
+        }
+    } catch (error) {
+        console.error('Error unlocking supplier information:', error);
+        showMessage('An error occurred. Please try again.', 'error');
+    }
+}
+
+// Update credit display
+function updateCreditDisplay() {
+    const creditDisplay = document.getElementById('creditBalance');
+    if (creditDisplay) {
+        creditDisplay.textContent = `Credits: ${currentUser.credits} LKR`;
+    }
+}
+
+// Show payment modal
+function showPaymentModal() {
+    const modal = document.getElementById('paymentModal');
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Purchase Credits</h2>
+                <span class="close" onclick="closeModal(this.closest('.modal'))">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>You need 500 LKR credits to unlock supplier information.</p>
+                <form id="paymentForm" onsubmit="handlePayment(event)">
+                    <div class="form-group">
+                        <label for="cardNumber">Card Number</label>
+                        <input type="text" id="cardNumber" required pattern="[0-9]{16}" placeholder="1234 5678 9012 3456">
+                    </div>
+                    <div class="form-group">
+                        <label for="expiryDate">Expiry Date</label>
+                        <input type="text" id="expiryDate" required pattern="(0[1-9]|1[0-2])\/([0-9]{2})" placeholder="MM/YY">
+                    </div>
+                    <div class="form-group">
+                        <label for="cvv">CVV</label>
+                        <input type="text" id="cvv" required pattern="[0-9]{3,4}" placeholder="123">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Pay 500 LKR</button>
+                </form>
+            </div>
+        </div>
+    `;
+    openModal(modal);
+}
+
+// Handle payment submission
+async function handlePayment(event) {
+    event.preventDefault();
+    const form = event.target;
+    const submitButton = form.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.classList.add('loading');
+
+    try {
+        const response = await fetch('/api/credits/purchase', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                userId: currentUser.id,
+                amount: 500,
+                cardNumber: document.getElementById('cardNumber').value,
+                expiryDate: document.getElementById('expiryDate').value,
+                cvv: document.getElementById('cvv').value
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            currentUser.credits += 500;
+            updateCreditDisplay();
+            closeModal(document.getElementById('paymentModal'));
+            showMessage('Credits purchased successfully!', 'success');
+            // Refresh the requests to show unlocked supplier info
+            loadPartRequests();
+        } else {
+            showMessage('Payment failed. Please try again.', 'error');
+        }
+    } catch (error) {
+        console.error('Error processing payment:', error);
+        showMessage('An error occurred. Please try again.', 'error');
+    } finally {
+        submitButton.disabled = false;
+        submitButton.classList.remove('loading');
+    }
+}
+
+// Show notification message
+function showMessage(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    
+    // Add to document
+    document.body.appendChild(notification);
+    
+    // Fade in
+    setTimeout(() => notification.classList.add('show'), 100);
+    
+    // Remove after 5 seconds
+    setTimeout(() => {
+        notification.classList.remove('show');
+        setTimeout(() => notification.remove(), 300);
+    }, 5000);
+} 

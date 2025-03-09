@@ -4,10 +4,11 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
+	"path"
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
+	"panchikawatte.lk/internal/database"
 	"panchikawatte.lk/internal/handlers"
 )
 
@@ -16,6 +17,10 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found")
 	}
+
+	// Initialize database
+	database.InitDB()
+	defer database.CloseDB()
 
 	// Create router
 	r := mux.NewRouter()
@@ -33,10 +38,11 @@ func main() {
 	r.HandleFunc("/api/parts/requests", handlers.GetPartRequestsHandler).Methods("GET")
 	r.HandleFunc("/api/parts/requests/{id}", handlers.GetPartRequestHandler).Methods("GET")
 	r.HandleFunc("/api/parts/quotes", handlers.CreateQuoteHandler).Methods("POST")
+	r.HandleFunc("/api/parts/requests/{id}/status", handlers.UpdateRequestStatusHandler).Methods("PUT")
 
 	// Serve index.html for all other routes
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, filepath.Join("templates", "index.html"))
+		http.ServeFile(w, r, path.Join("templates", "index.html"))
 	})
 
 	port := os.Getenv("PORT")

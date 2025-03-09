@@ -7,13 +7,23 @@ import (
 type User struct {
 	ID          string    `json:"id"`
 	FullName    string    `json:"fullName"`
-	IDNumber    string    `json:"idNumber"`
 	Email       string    `json:"email"`
 	Phone       string    `json:"phone"`
-	Password    string    `json:"-"` // Password hash, not returned in JSON
+	Password    string    `json:"password"`
+	Type        string    `json:"type"` // "customer" or "supplier"
 	IsVerified  bool      `json:"isVerified"`
 	CreatedAt   time.Time `json:"createdAt"`
 	LastLoginAt time.Time `json:"lastLoginAt"`
+	Credits     float64   `json:"credits"`
+	// Supplier specific fields
+	BusinessName      string   `json:"businessName,omitempty"`
+	BusinessRegNumber string   `json:"businessRegNumber,omitempty"`
+	VatNumber         string   `json:"vatNumber,omitempty"`
+	BusinessAddress   string   `json:"businessAddress,omitempty"`
+	District          string   `json:"district,omitempty"`
+	Specializations   []string `json:"specializations,omitempty"`
+	BusinessRegDocURL string   `json:"businessRegDocURL,omitempty"`
+	VatCertificateURL string   `json:"vatCertificateURL,omitempty"`
 }
 
 type PartRequest struct {
@@ -51,11 +61,18 @@ type PhoneVerification struct {
 
 // Request/Response structures
 type RegisterRequest struct {
+	UserType string `json:"userType"`
 	FullName string `json:"fullName"`
-	IDNumber string `json:"idNumber"`
 	Email    string `json:"email"`
 	Phone    string `json:"phone"`
 	Password string `json:"password"`
+	// Supplier specific fields
+	BusinessName      string   `json:"businessName,omitempty"`
+	BusinessRegNumber string   `json:"businessRegNumber,omitempty"`
+	VatNumber         string   `json:"vatNumber,omitempty"`
+	BusinessAddress   string   `json:"businessAddress,omitempty"`
+	District          string   `json:"district,omitempty"`
+	Specializations   []string `json:"specializations,omitempty"`
 }
 
 type LoginRequest struct {

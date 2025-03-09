@@ -6,13 +6,15 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"panchikawatte.lk/internal/database"
 	"panchikawatte.lk/internal/models"
 )
 
@@ -33,25 +35,38 @@ func init() {
 }
 
 func RegisterHandler(w http.ResponseWriter, r *http.Request) {
-	var req models.RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	// Parse multipart form data with 10MB limit
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "Unable to parse form", http.StatusBadRequest)
 		return
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
+	// Get form values
+	userType := r.FormValue("userType")
+	fullName := r.FormValue("fullName")
+	email := r.FormValue("email")
+	phone := r.FormValue("phone")
+	password := r.FormValue("password")
+
+	// Validate required fields
+	if fullName == "" || email == "" || phone == "" || password == "" || userType == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
 
 	// Check if email already exists
-	for _, user := range users {
-		if user.Email == req.Email {
-			http.Error(w, "Email already registered", http.StatusConflict)
-			return
-		}
+	existingUser, err := database.GetUserByEmail(email)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if existingUser.ID != "" {
+		http.Error(w, "Email already registered", http.StatusConflict)
+		return
 	}
 
 	// Hash password
-	hashedPassword, err := hashPassword(req.Password)
+	hashedPassword, err := hashPassword(password)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -60,22 +75,102 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// Create new user
 	user := models.User{
 		ID:          uuid.New().String(),
-		FullName:    req.FullName,
-		IDNumber:    req.IDNumber,
-		Email:       req.Email,
-		Phone:       req.Phone,
+		FullName:    fullName,
+		Email:       email,
+		Phone:       phone,
 		Password:    hashedPassword,
+		Type:        userType,
 		IsVerified:  false,
 		CreatedAt:   time.Now(),
 		LastLoginAt: time.Now(),
+		Credits:     0, // Initial credits
 	}
 
-	users[user.ID] = user
+	// Handle supplier-specific fields
+	if userType == "supplier" {
+		businessName := r.FormValue("businessName")
+		businessRegNumber := r.FormValue("businessRegNumber")
+		vatNumber := r.FormValue("vatNumber")
+		businessAddress := r.FormValue("businessAddress")
+		district := r.FormValue("district")
+		specializations := r.Form["specializations[]"]
+
+		// Validate required supplier fields
+		if businessName == "" || businessRegNumber == "" || businessAddress == "" || district == "" || len(specializations) == 0 {
+			http.Error(w, "Missing required supplier fields", http.StatusBadRequest)
+			return
+		}
+
+		// Handle business registration document
+		businessRegDoc, header, err := r.FormFile("businessRegistrationDoc")
+		if err != nil {
+			http.Error(w, "Business registration document is required", http.StatusBadRequest)
+			return
+		}
+		defer businessRegDoc.Close()
+
+		// Validate file size and type
+		if header.Size > maxFileSize {
+			http.Error(w, "Business registration document is too large (max 5MB)", http.StatusBadRequest)
+			return
+		}
+
+		// Save business registration document
+		filename := fmt.Sprintf("business_reg_%s%s", user.ID, path.Ext(header.Filename))
+		filepath := path.Join("static/uploads", filename)
+		dst, err := os.Create(filepath)
+		if err != nil {
+			http.Error(w, "Error saving business registration document", http.StatusInternalServerError)
+			return
+		}
+		defer dst.Close()
+		if _, err := io.Copy(dst, businessRegDoc); err != nil {
+			http.Error(w, "Error saving business registration document", http.StatusInternalServerError)
+			return
+		}
+
+		// Handle VAT certificate if provided
+		var vatCertificateURL string
+		if vatFile, vatHeader, err := r.FormFile("vatCertificate"); err == nil {
+			defer vatFile.Close()
+			if vatHeader.Size <= maxFileSize {
+				vatFilename := fmt.Sprintf("vat_%s%s", user.ID, path.Ext(vatHeader.Filename))
+				vatFilepath := path.Join("static/uploads", vatFilename)
+				if dst, err := os.Create(vatFilepath); err == nil {
+					defer dst.Close()
+					if _, err := io.Copy(dst, vatFile); err == nil {
+						vatCertificateURL = "/static/uploads/" + vatFilename
+					}
+				}
+			}
+		}
+
+		// Update user with supplier fields
+		user.BusinessName = businessName
+		user.BusinessRegNumber = businessRegNumber
+		user.VatNumber = vatNumber
+		user.BusinessAddress = businessAddress
+		user.District = district
+		user.Specializations = specializations
+		user.BusinessRegDocURL = "/static/uploads/" + filename
+		user.VatCertificateURL = vatCertificateURL
+	}
+
+	// Save user to database
+	if err := database.CreateUser(user); err != nil {
+		http.Error(w, "Error creating user", http.StatusInternalServerError)
+		return
+	}
 
 	response := models.APIResponse{
 		Success: true,
 		Message: "Registration successful",
+		Data: map[string]interface{}{
+			"userId":   user.ID,
+			"userType": user.Type,
+		},
 	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -86,16 +181,11 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mu.RLock()
-	defer mu.RUnlock()
-
 	// Find user by email
-	var user models.User
-	for _, u := range users {
-		if u.Email == req.Email {
-			user = u
-			break
-		}
+	user, err := database.GetUserByEmail(req.Email)
+	if err != nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
 	}
 
 	if user.ID == "" {
@@ -136,9 +226,10 @@ func VerifyPhoneHandler(w http.ResponseWriter, r *http.Request) {
 	// Generate mock verification code
 	code := "123456" // In production, generate a random code
 
-	mu.Lock()
-	verificationCodes[req.PhoneNumber] = code
-	mu.Unlock()
+	if err := database.SaveVerificationCode(req.PhoneNumber, code); err != nil {
+		http.Error(w, "Error saving verification code", http.StatusInternalServerError)
+		return
+	}
 
 	// In production, send SMS here
 	response := models.APIResponse{
@@ -155,25 +246,17 @@ func VerifyCodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-
-	storedCode, exists := verificationCodes[req.PhoneNumber]
-	if !exists || storedCode != req.Code {
+	storedCode, err := database.GetVerificationCode(req.PhoneNumber)
+	if err != nil || storedCode != req.Code {
 		http.Error(w, "Invalid verification code", http.StatusBadRequest)
 		return
 	}
 
-	// Mark phone as verified for the user
-	for id, user := range users {
-		if user.Phone == req.PhoneNumber {
-			user.IsVerified = true
-			users[id] = user
-			break
-		}
+	// Delete the verification code
+	if err := database.DeleteVerificationCode(req.PhoneNumber); err != nil {
+		http.Error(w, "Error deleting verification code", http.StatusInternalServerError)
+		return
 	}
-
-	delete(verificationCodes, req.PhoneNumber)
 
 	response := models.APIResponse{
 		Success: true,
@@ -190,36 +273,9 @@ func CreatePartRequestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get token from Authorization header
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		http.Error(w, "Authorization header required", http.StatusUnauthorized)
-		return
-	}
-
-	// Extract token from "Bearer <token>"
-	tokenString := ""
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-		tokenString = authHeader[7:]
-	} else {
-		http.Error(w, "Invalid authorization format", http.StatusUnauthorized)
-		return
-	}
-
-	// Parse and validate token
-	claims := jwt.MapClaims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
-	})
-
-	if err != nil || !token.Valid {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	// Get user ID from token
-	userID, ok := claims["user_id"].(string)
-	if !ok {
-		http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+	userID, err := getUserIDFromToken(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -253,9 +309,9 @@ func CreatePartRequestHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Generate unique filename
-		ext := filepath.Ext(header.Filename)
+		ext := path.Ext(header.Filename)
 		filename := fmt.Sprintf("%s_%s%s", uuid.New().String(), view, ext)
-		filepath := filepath.Join("static/uploads", filename)
+		filepath := path.Join("static/uploads", filename)
 
 		// Create the file
 		dst, err := os.Create(filepath)
@@ -290,9 +346,10 @@ func CreatePartRequestHandler(w http.ResponseWriter, r *http.Request) {
 		Quotes:        []models.Quote{},
 	}
 
-	mu.Lock()
-	partRequests[partRequest.ID] = partRequest
-	mu.Unlock()
+	if err := database.CreatePartRequest(partRequest); err != nil {
+		http.Error(w, "Error creating part request", http.StatusInternalServerError)
+		return
+	}
 
 	response := models.APIResponse{
 		Success: true,
@@ -303,12 +360,10 @@ func CreatePartRequestHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetPartRequestsHandler(w http.ResponseWriter, r *http.Request) {
-	mu.RLock()
-	defer mu.RUnlock()
-
-	requests := make([]models.PartRequest, 0, len(partRequests))
-	for _, req := range partRequests {
-		requests = append(requests, req)
+	requests, err := database.GetPartRequests()
+	if err != nil {
+		http.Error(w, "Error fetching part requests", http.StatusInternalServerError)
+		return
 	}
 
 	response := models.APIResponse{
@@ -318,7 +373,23 @@ func GetPartRequestsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// Add new handler for quotes
+func GetPartRequestHandler(w http.ResponseWriter, r *http.Request) {
+	// Extract request ID from URL path
+	requestID := strings.TrimPrefix(r.URL.Path, "/api/parts/requests/")
+
+	request, err := database.GetPartRequestByID(requestID)
+	if err != nil {
+		http.Error(w, "Part request not found", http.StatusNotFound)
+		return
+	}
+
+	response := models.APIResponse{
+		Success: true,
+		Data:    request,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
 func CreateQuoteHandler(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateQuoteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -326,51 +397,13 @@ func CreateQuoteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get token from Authorization header
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		http.Error(w, "Authorization header required", http.StatusUnauthorized)
-		return
-	}
-
-	// Extract token from "Bearer <token>"
-	tokenString := ""
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-		tokenString = authHeader[7:]
-	} else {
-		http.Error(w, "Invalid authorization format", http.StatusUnauthorized)
-		return
-	}
-
-	// Parse and validate token
-	claims := jwt.MapClaims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
-	})
-
-	if err != nil || !token.Valid {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
-
 	// Get user ID from token
-	supplierID, ok := claims["user_id"].(string)
-	if !ok {
-		http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+	supplierID, err := getUserIDFromToken(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Find the part request
-	partRequest, exists := partRequests[req.RequestID]
-	if !exists {
-		http.Error(w, "Part request not found", http.StatusNotFound)
-		return
-	}
-
-	// Create new quote
 	quote := models.Quote{
 		ID:         uuid.New().String(),
 		RequestID:  req.RequestID,
@@ -383,9 +416,10 @@ func CreateQuoteHandler(w http.ResponseWriter, r *http.Request) {
 		Status:     "pending",
 	}
 
-	// Add quote to the request
-	partRequest.Quotes = append(partRequest.Quotes, quote)
-	partRequests[req.RequestID] = partRequest
+	if err := database.CreateQuote(quote); err != nil {
+		http.Error(w, "Error creating quote", http.StatusInternalServerError)
+		return
+	}
 
 	response := models.APIResponse{
 		Success: true,
@@ -395,24 +429,62 @@ func CreateQuoteHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// Add handler to get single part request
-func GetPartRequestHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract request ID from URL path
-	requestID := r.URL.Path[len("/api/parts/requests/"):]
+func UpdateRequestStatusHandler(w http.ResponseWriter, r *http.Request) {
+	// Get user ID from token
+	userID, err := getUserIDFromToken(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 
-	mu.RLock()
-	defer mu.RUnlock()
+	var req struct {
+		RequestID string `json:"requestId"`
+		Status    string `json:"status"`
+	}
 
-	request, exists := partRequests[requestID]
-	if !exists {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Get the request to verify ownership
+	request, err := database.GetPartRequestByID(req.RequestID)
+	if err != nil {
 		http.Error(w, "Part request not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify that the user is the owner of the request
+	if request.UserID != userID {
+		http.Error(w, "Unauthorized to update this request", http.StatusForbidden)
+		return
+	}
+
+	// Validate status
+	validStatuses := map[string]bool{
+		"open":           true,
+		"received_offer": true,
+		"purchased":      true,
+		"completed":      true,
+	}
+
+	if !validStatuses[req.Status] {
+		http.Error(w, "Invalid status", http.StatusBadRequest)
+		return
+	}
+
+	// Update the status
+	if err := database.UpdateRequestStatus(req.RequestID, req.Status); err != nil {
+		http.Error(w, "Error updating request status", http.StatusInternalServerError)
 		return
 	}
 
 	response := models.APIResponse{
 		Success: true,
+		Message: "Request status updated successfully",
 		Data:    request,
 	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -436,4 +508,34 @@ func hashPassword(password string) (string, error) {
 func checkPasswordHash(password, hash string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	return err == nil
+}
+
+func getUserIDFromToken(r *http.Request) (string, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", fmt.Errorf("authorization header required")
+	}
+
+	tokenString := ""
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		tokenString = authHeader[7:]
+	} else {
+		return "", fmt.Errorf("invalid authorization format")
+	}
+
+	claims := jwt.MapClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		return jwtKey, nil
+	})
+
+	if err != nil || !token.Valid {
+		return "", fmt.Errorf("invalid token")
+	}
+
+	userID, ok := claims["user_id"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid token claims")
+	}
+
+	return userID, nil
 }
